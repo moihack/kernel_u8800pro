@@ -568,29 +568,15 @@ static int __init hci_uart_init(void)
 #ifdef CONFIG_BT_HCIUART_BCSP
 	bcsp_init();
 #endif
-/* < DTS2012020604357 zhangyun 20120206 begin */
-#if defined(CONFIG_BT_HCIUART_LL) && defined(HUAWEI_BT_BTLA_VER30)
+#ifdef CONFIG_BT_HCIUART_LL
 	ll_init();
 #endif
-
-/*default without Huawei modification*/
-#if defined(CONFIG_BT_HCIUART_LL) && (!defined(CONFIG_HUAWEI_KERNEL))
-    ll_init();
-#endif
-/* DTS2012020604357 zhangyun 20120206 end > */
 #ifdef CONFIG_BT_HCIUART_ATH3K
 	ath_init();
 #endif
-/* < DTS2012020604357 zhangyun 20120206 begin */
-#if defined(CONFIG_BT_HCIUART_IBS) && defined(HUAWEI_BT_BLUEZ_VER30)
+#ifdef CONFIG_BT_HCIUART_IBS
 	ibs_init();
 #endif
-
-/*default without Huawei modification*/
-#if defined(CONFIG_BT_HCIUART_IBS) && (!defined(CONFIG_HUAWEI_KERNEL))
-    ibs_init();
-#endif
-/* DTS2012020604357 zhangyun 20120206 end > */
 
 	return 0;
 }
@@ -605,29 +591,15 @@ static void __exit hci_uart_exit(void)
 #ifdef CONFIG_BT_HCIUART_BCSP
 	bcsp_deinit();
 #endif
-/* < DTS2012020604357 zhangyun 20120206 begin */
-#if defined(CONFIG_BT_HCIUART_LL) && defined(HUAWEI_BT_BTLA_VER30)
+#ifdef CONFIG_BT_HCIUART_LL
 	ll_deinit();
 #endif
-
-/*default without Huawei modification*/
-#if defined(CONFIG_BT_HCIUART_LL) && (!defined(CONFIG_HUAWEI_KERNEL))
-	ll_deinit();
-#endif
-/* DTS2012020604357 zhangyun 20120206 end > */
 #ifdef CONFIG_BT_HCIUART_ATH3K
 	ath_deinit();
 #endif
-/* < DTS2012020604357 zhangyun 20120206 begin */
-#if defined(CONFIG_BT_HCIUART_IBS) && defined(HUAWEI_BT_BLUEZ_VER30)
+#ifdef CONFIG_BT_HCIUART_IBS
 	ibs_deinit();
 #endif
-
-/*default without Huawei modification*/
-#if defined(CONFIG_BT_HCIUART_IBS) && (!defined(CONFIG_HUAWEI_KERNEL))
-	ibs_deinit();
-#endif
-/* DTS2012020604357 zhangyun 20120206 end > */
 
 	/* Release tty registration of line discipline */
 	if ((err = tty_unregister_ldisc(N_HCI)))
