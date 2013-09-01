@@ -22,7 +22,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/errno.h>
-#include <linux/semaphore.h>
 #include <linux/string.h>
 #include <linux/skbuff.h>
 #include <linux/wakelock.h>
@@ -44,14 +43,11 @@
 
 
 static int hcismd_set;
-static DEFINE_SEMAPHORE(hci_smd_enable);
-
-static int restart_in_progress;
+static DEFINE_MUTEX(hci_smd_enable);
 
 static int hcismd_set_enable(const char *val, struct kernel_param *kp);
 module_param_call(hcismd_set, hcismd_set_enable, NULL, &hcismd_set, 0644);
 
-static void hci_dev_smd_open(struct work_struct *worker);
 static void hci_dev_restart(struct work_struct *worker);
 
 struct hci_smd_data {
@@ -319,8 +315,6 @@ static void hci_smd_notify_event(void *data, unsigned int event)
 	struct hci_dev *hdev = hs.hdev;
 	struct hci_smd_data *hsmd = &hs;
 	struct work_struct *reset_worker;
-	struct work_struct *open_worker;
-
 	int len = 0;
 
 	if (!hdev) {
@@ -340,13 +334,6 @@ static void hci_smd_notify_event(void *data, unsigned int event)
 	case SMD_EVENT_OPEN:
 		BT_INFO("opening HCI-SMD channel :%s", EVENT_CHANNEL);
 		hci_smd_open(hdev);
-		open_worker = kzalloc(sizeof(*open_worker), GFP_ATOMIC);
-		if (!open_worker) {
-			BT_ERR("Out of memory");
-			break;
-		}
-		INIT_WORK(open_worker, hci_dev_smd_open);
-		schedule_work(open_worker);
 		break;
 	case SMD_EVENT_CLOSE:
 		BT_INFO("Closing HCI-SMD channel :%s", EVENT_CHANNEL);
@@ -397,24 +384,9 @@ static void hci_smd_notify_data(void *data, unsigned int event)
 
 }
 
-static int hci_smd_hci_register_dev(struct hci_smd_data *hsmd)
+static int hci_smd_register_dev(struct hci_smd_data *hsmd)
 {
-	struct hci_dev *hdev;
-
-	hdev = hsmd->hdev;
-
-	if (hci_register_dev(hdev) < 0) {
-		BT_ERR("Can't register HCI device");
-		hci_free_dev(hdev);
-		hsmd->hdev = NULL;
-		return -ENODEV;
-	}
-	return 0;
-}
-
-static int hci_smd_register_smd(struct hci_smd_data *hsmd)
-{
-	struct hci_dev *hdev;
+	static struct hci_dev *hdev;
 	int rc;
 
 	/* Initialize and register HCI device */
@@ -449,7 +421,7 @@ static int hci_smd_register_smd(struct hci_smd_data *hsmd)
 	if (rc < 0) {
 		BT_ERR("Cannot open the command channel");
 		hci_free_dev(hdev);
-		hsmd->hdev = NULL;
+		hdev = NULL;
 		return -ENODEV;
 	}
 
@@ -458,13 +430,18 @@ static int hci_smd_register_smd(struct hci_smd_data *hsmd)
 	if (rc < 0) {
 		BT_ERR("Failed to open the Data channel");
 		hci_free_dev(hdev);
-		hsmd->hdev = NULL;
+		hdev = NULL;
 		return -ENODEV;
 	}
 
 	/* Disable the read interrupts on the channel */
 	smd_disable_read_intr(hsmd->event_channel);
 	smd_disable_read_intr(hsmd->data_channel);
+	if (hci_register_dev(hdev) < 0) {
+		BT_ERR("Can't register HCI device");
+		hci_free_dev(hdev);
+		return -ENODEV;
+	}
 	return 0;
 }
 
@@ -499,24 +476,10 @@ static void hci_smd_deregister_dev(struct hci_smd_data *hsmd)
 
 static void hci_dev_restart(struct work_struct *worker)
 {
-	down(&hci_smd_enable);
-	restart_in_progress = 1;
+	mutex_lock(&hci_smd_enable);
 	hci_smd_deregister_dev(&hs);
-	hci_smd_register_smd(&hs);
-	up(&hci_smd_enable);
-	kfree(worker);
-}
-
-static void hci_dev_smd_open(struct work_struct *worker)
-{
-	down(&hci_smd_enable);
-	if (restart_in_progress == 1) {
-		/* Allow wcnss to initialize */
-		restart_in_progress = 0;
-		msleep(10000);
-	}
-	hci_smd_hci_register_dev(&hs);
-	up(&hci_smd_enable);
+	hci_smd_register_dev(&hs);
+	mutex_unlock(&hci_smd_enable);
 	kfree(worker);
 }
 
@@ -524,9 +487,7 @@ static int hcismd_set_enable(const char *val, struct kernel_param *kp)
 {
 	int ret = 0;
 
-	pr_err("hcismd_set_enable %d", hcismd_set);
-
-	down(&hci_smd_enable);
+	mutex_lock(&hci_smd_enable);
 
 	ret = param_set_int(val, kp);
 
@@ -536,8 +497,7 @@ static int hcismd_set_enable(const char *val, struct kernel_param *kp)
 	switch (hcismd_set) {
 
 	case 1:
-		if (hs.hdev == NULL)
-			hci_smd_register_smd(&hs);
+		hci_smd_register_dev(&hs);
 	break;
 	case 0:
 		hci_smd_deregister_dev(&hs);
@@ -547,7 +507,7 @@ static int hcismd_set_enable(const char *val, struct kernel_param *kp)
 	}
 
 done:
-	up(&hci_smd_enable);
+	mutex_unlock(&hci_smd_enable);
 	return ret;
 }
 static int  __init hci_smd_init(void)
@@ -556,8 +516,6 @@ static int  __init hci_smd_init(void)
 			 "msm_smd_Rx");
 	wake_lock_init(&hs.wake_lock_tx, WAKE_LOCK_SUSPEND,
 			 "msm_smd_Tx");
-	restart_in_progress = 0;
-	hs.hdev = NULL;
 	return 0;
 }
 module_init(hci_smd_init);
